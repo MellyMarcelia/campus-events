@@ -1,0 +1,40 @@
+# Render Blueprint: Dashboard → New → Blueprint → pick this repo.
+# Two services: the Express API and the Vue frontend as a static site.
+services:
+  - type: web
+    name: campus-events-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start -w api
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22.12.0"
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      # Free instances have no persistent disk: the SQLite file resets on every
+      # redeploy/restart and server.mjs re-adds the demo data.
+      - key: DB_STORAGE
+        value: ./data/events.sqlite
+
+  - type: web
+    name: campus-events-web
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: web/dist
+    envVars:
+      - key: NODE_VERSION
+        value: "22.12.0"
+    routes:
+      # Same trick as the Vite dev proxy: the browser only talks to one origin, so no CORS.
+      # If Render gives the API a different URL, update it here.
+      - type: rewrite
+        source: /api/*
+        destination: https://campus-events-api.onrender.com/api/*
+      # SPA fallback so Vue Router deep links (e.g. /events/3) work on refresh.
+      - type: rewrite
+        source: /*
+        destination: /index.html
