@@ -38,7 +38,7 @@ services:
       # If Render gives the API a different URL, update it here.
       - type: rewrite
         source: /api/*
-        destination: https://campus-events-api.onrender.com/api/*
+        destination: https://campus-events-api-y8n4.onrender.com/api/*
       # SPA fallback so Vue Router deep links (e.g. /events/3) work on refresh.
       - type: rewrite
         source: /*
