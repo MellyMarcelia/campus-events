@@ -1,6 +1,7 @@
 // Composition root: the only place that knows which concrete pieces are plugged together.
 // createApp() builds a fresh app every call, so tests can pass their own fakes (see tests/helpers).
 import express from 'express';
+import { createMemoryCache } from './cache/memoryCache.mjs';
 import { env } from './config/env.mjs';
 import { createEventController } from './controllers/eventController.mjs';
 import { createHealthController } from './controllers/healthController.mjs';
@@ -25,8 +26,8 @@ function createDefaultMailer() {
   return createSmtpMailer({ url: env.smtpUrl, from: env.mailFrom, timeoutMs: env.mailTimeoutMs });
 }
 
-function createServices({ mailer }) {
-  const repos = { events: eventRepository, registrations: registrationRepository };
+function createServices({ mailer, cache }) {
+  const repos = { events: eventRepository, registrations: registrationRepository, cache };
   const eventService = createEventService(repos);
 
   return {
@@ -38,8 +39,9 @@ function createServices({ mailer }) {
 }
 
 // Every dependency can be overridden, e.g. createApp({ mailer: fakeMailer }) in tests.
-export function createApp({ mailer = createDefaultMailer() } = {}) {
-  const services = createServices({ mailer });
+// Each app gets its own cache, so tests never see each other's cached data.
+export function createApp({ mailer = createDefaultMailer(), cache = createMemoryCache({ ttlSeconds: env.cacheTtlSeconds }) } = {}) {
+  const services = createServices({ mailer, cache });
   const controllers = {
     health: createHealthController(services.health),
     events: createEventController(services.events),

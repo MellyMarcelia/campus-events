@@ -1,3 +1,4 @@
+import { cacheKeys } from '../cache/cacheKeys.mjs';
 import { conflict } from '../errors/AppError.mjs';
 import { logger } from '../lib/logger.mjs';
 
@@ -10,7 +11,7 @@ export function confirmationMail(event, registration) {
   };
 }
 
-export function createRegistrationService({ eventService, registrations, mailer }) {
+export function createRegistrationService({ eventService, registrations, mailer, cache }) {
   async function assertNotRegistered(eventId, email) {
     const existing = await registrations.findByEventAndEmail(eventId, email);
     if (existing) throw conflict(`${email} is already registered for this event`);
@@ -32,9 +33,11 @@ export function createRegistrationService({ eventService, registrations, mailer 
   }
 
   return {
-    async listForEvent(eventId) {
-      await eventService.getById(eventId); // 404 for an unknown event
-      return registrations.findByEvent(eventId);
+    listForEvent(eventId) {
+      return cache.remember(cacheKeys.registrations(eventId), async () => {
+        await eventService.getById(eventId); // 404 for an unknown event (errors are never cached)
+        return registrations.findByEvent(eventId);
+      });
     },
 
     async register(eventId, { name, email }) {
@@ -44,6 +47,8 @@ export function createRegistrationService({ eventService, registrations, mailer 
 
       const registration = await registrations.create({ eventId: event.id, name, email });
       logger.info('new registration', { eventId: event.id, registrationId: registration.id });
+      // The event list holds no counts, so it stays valid; these three show registrations.
+      await cache.delete(cacheKeys.event(event.id), cacheKeys.registrations(event.id), cacheKeys.stats);
 
       sendConfirmationInBackground(event, registration);
       return registration;
