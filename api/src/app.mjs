@@ -1,10 +1,14 @@
 // Composition root: the only place that knows which concrete pieces are plugged together.
 // createApp() builds a fresh app every call, so tests can pass their own fakes (see tests/helpers).
 import express from 'express';
+import { env } from './config/env.mjs';
 import { createEventController } from './controllers/eventController.mjs';
 import { createHealthController } from './controllers/healthController.mjs';
 import { createRegistrationController } from './controllers/registrationController.mjs';
 import { createStatsController } from './controllers/statsController.mjs';
+import { logger } from './lib/logger.mjs';
+import { createLogMailer } from './mail/logMailer.mjs';
+import { createSmtpMailer } from './mail/smtpMailer.mjs';
 import { errorHandler, notFoundHandler } from './middleware/errorHandlers.mjs';
 import { requestLogger } from './middleware/requestLogger.mjs';
 import { eventRepository } from './repositories/eventRepository.mjs';
@@ -16,20 +20,26 @@ import { createHealthService } from './services/healthService.mjs';
 import { createRegistrationService } from './services/registrationService.mjs';
 import { createStatsService } from './services/statsService.mjs';
 
-function createServices() {
+function createDefaultMailer() {
+  if (!env.smtpUrl) return createLogMailer(logger);
+  return createSmtpMailer({ url: env.smtpUrl, from: env.mailFrom, timeoutMs: env.mailTimeoutMs });
+}
+
+function createServices({ mailer }) {
   const repos = { events: eventRepository, registrations: registrationRepository };
   const eventService = createEventService(repos);
 
   return {
     health: createHealthService({ health: healthRepository }),
     events: eventService,
-    registrations: createRegistrationService({ ...repos, eventService }),
+    registrations: createRegistrationService({ ...repos, eventService, mailer }),
     stats: createStatsService(repos)
   };
 }
 
-export function createApp() {
-  const services = createServices();
+// Every dependency can be overridden, e.g. createApp({ mailer: fakeMailer }) in tests.
+export function createApp({ mailer = createDefaultMailer() } = {}) {
+  const services = createServices({ mailer });
   const controllers = {
     health: createHealthController(services.health),
     events: createEventController(services.events),
