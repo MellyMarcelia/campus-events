@@ -19,6 +19,11 @@ services:
       # redeploy/restart and server.mjs re-adds the demo data.
       - key: DB_STORAGE
         value: ./data/events.sqlite
+      # Secret: fill in on the dashboard. Without it, mails are only logged.
+      - key: SMTP_URL
+        sync: false
+      - key: MAIL_FROM
+        sync: false
 
   - type: web
     name: campus-events-web
