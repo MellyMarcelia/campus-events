@@ -9,7 +9,7 @@ export function createRegistrationService({ eventService, registrations }) {
 
   async function assertHasSeats(event) {
     const count = await registrations.countByEvent(event.id);
-    if (count > event.capacity) throw conflict('Event is full');
+    if (count >= event.capacity) throw conflict('Event is full');
   }
 
   return {
