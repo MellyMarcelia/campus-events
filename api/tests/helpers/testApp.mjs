@@ -1,11 +1,11 @@
-import { app, Event, Registration, sequelize } from '../../src/app.mjs';
+import { createApp } from '../../src/app.mjs';
+import { Event, Registration, sequelize } from '../../src/models/index.mjs';
 
-// The app and its database are created as soon as app.mjs is imported.
 // .env.test sets DB_STORAGE=:memory:, so the tests never touch your real data.
-// Every call empties all tables: tests never share state.
+// Every call empties all tables and builds a fresh app: tests never share state.
 export async function createTestApp() {
   await sequelize.sync({ force: true });
-  return { app, db: { sequelize, Event, Registration } };
+  return { app: createApp(), db: { sequelize, Event, Registration } };
 }
 
 export const validEvent = (overrides = {}) => ({
