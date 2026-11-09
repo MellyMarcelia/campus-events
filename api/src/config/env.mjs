@@ -28,6 +28,10 @@ export const env = Object.freeze({
   mailFrom: process.env.MAIL_FROM || 'Campus Events <no-reply@campus-events.local>',
   // Kept short on purpose: a slow mail server must never hold on to resources for minutes.
   mailTimeoutMs: toNumber(process.env.MAIL_TIMEOUT_MS, 10_000),
+  // Failed confirmation mails are retried by a job in the API process, every hour by default.
+  mailRetryIntervalMs: toNumber(process.env.MAIL_RETRY_INTERVAL_MS, 60 * 60 * 1000),
+  // Counts the first try too: 24 = the first try plus about a day of hourly retries.
+  mailMaxAttempts: toNumber(process.env.MAIL_MAX_ATTEMPTS, 24),
 
   // Cache: how long a cached GET response may live, as a safety net next to explicit invalidation.
   cacheTtlSeconds: toNumber(process.env.CACHE_TTL_SECONDS, 60)

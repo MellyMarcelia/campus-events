@@ -90,8 +90,17 @@ After a successful registration the participant gets a confirmation mail.
 - SMTP timeouts are short (`MAIL_TIMEOUT_MS`, default 10 s) instead of nodemailer's default of minutes.
 - Without `SMTP_URL`, mails are only written to the log, so local development needs no mail account.
 
-Trade-off: if the provider is down, that mail is lost (it is logged, not retried). A durable fix is an outbox
-table or a RabbitMQ queue (see `api/lab/`) with a worker that retries.
+**Retries.** A mail that fails is stored in the `PendingMails` table. A job inside the API process retries it
+once at startup and then every `MAIL_RETRY_INTERVAL_MS` (default 1 h), one mail at a time, until it is sent
+(row deleted) or `MAIL_MAX_ATTEMPTS` (default 24, first try included) is reached (row kept, logged as `error`).
+
+Trade-offs, accepted to stay simple (no broker, no extra process):
+- A crash between storing the registration and the first send attempt loses that mail.
+- If the provider accepts a mail but deleting its row fails, it is sent twice.
+- Run more than one API instance and both retry the same mails. With SQLite there is only one.
+- A RabbitMQ queue with a worker (see `api/lab/`) would fix these and retry faster.
+
+Code: `services/mailRetryService.mjs`, `repositories/pendingMailRepository.mjs`, started in `server.mjs`.
 
 ### Caching
 

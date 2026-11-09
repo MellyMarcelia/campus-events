@@ -11,7 +11,7 @@ export function confirmationMail(event, registration) {
   };
 }
 
-export function createRegistrationService({ eventService, registrations, mailer, cache }) {
+export function createRegistrationService({ eventService, registrations, pendingMails, mailer, cache }) {
   async function assertNotRegistered(eventId, email) {
     const existing = await registrations.findByEventAndEmail(eventId, email);
     if (existing) throw conflict(`${email} is already registered for this event`);
@@ -23,13 +23,19 @@ export function createRegistrationService({ eventService, registrations, mailer,
   }
 
   // Deliberately NOT awaited by register(): the registration is already stored, and a slow or
-  // offline mail provider must neither fail it nor delay the response. Failures are logged instead.
+  // offline mail provider must neither fail it nor delay the response. A failed mail is stored,
+  // so the hourly retry job (mailRetryService) sends it later.
   // Promise.resolve().then(...) also catches a mailer that throws synchronously.
   function sendConfirmationInBackground(event, registration) {
+    const context = { registrationId: registration.id };
     return Promise.resolve()
       .then(() => mailer.send(confirmationMail(event, registration)))
-      .then(() => logger.info('confirmation mail sent', { registrationId: registration.id }))
-      .catch((err) => logger.warn('confirmation mail failed, registration is kept', { registrationId: registration.id, error: err.message }));
+      .then(() => logger.info('confirmation mail sent', context))
+      .catch(async (err) => {
+        logger.warn('confirmation mail failed, registration is kept, will retry later', { ...context, error: err.message });
+        await pendingMails.add(registration.id, err.message);
+      })
+      .catch((err) => logger.error('could not store the failed mail for a retry', { ...context, error: err.message }));
   }
 
   return {

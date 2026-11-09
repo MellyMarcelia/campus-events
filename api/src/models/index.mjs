@@ -17,4 +17,16 @@ export const Registration = sequelize.define('Registration', {
 Event.hasMany(Registration, { foreignKey: { name: 'eventId', allowNull: false }, onDelete: 'CASCADE' });
 Registration.belongsTo(Event, { foreignKey: 'eventId' });
 
+// A confirmation mail that failed. Only failed mails get a row: the hourly retry job
+// (services/mailRetryService.mjs) tries again and deletes the row once the mail is out.
+// A separate table instead of columns on Registration: sync() creates it in an existing database,
+// and the registrations API keeps returning exactly the same fields.
+export const PendingMail = sequelize.define('PendingMail', {
+  attempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
+  lastError: { type: DataTypes.TEXT, allowNull: true }
+});
+
+Registration.hasOne(PendingMail, { foreignKey: { name: 'registrationId', allowNull: false, unique: true }, onDelete: 'CASCADE' });
+PendingMail.belongsTo(Registration, { foreignKey: 'registrationId' });
+
 export { sequelize };

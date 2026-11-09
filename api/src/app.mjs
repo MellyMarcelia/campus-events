@@ -14,14 +14,16 @@ import { errorHandler, notFoundHandler } from './middleware/errorHandlers.mjs';
 import { requestLogger } from './middleware/requestLogger.mjs';
 import { eventRepository } from './repositories/eventRepository.mjs';
 import { healthRepository } from './repositories/healthRepository.mjs';
+import { pendingMailRepository } from './repositories/pendingMailRepository.mjs';
 import { registrationRepository } from './repositories/registrationRepository.mjs';
 import { createRouter } from './routes/index.mjs';
 import { createEventService } from './services/eventService.mjs';
 import { createHealthService } from './services/healthService.mjs';
+import { createMailRetryService } from './services/mailRetryService.mjs';
 import { createRegistrationService } from './services/registrationService.mjs';
 import { createStatsService } from './services/statsService.mjs';
 
-function createDefaultMailer() {
+export function createDefaultMailer() {
   if (!env.smtpUrl) return createLogMailer(logger);
   return createSmtpMailer({ url: env.smtpUrl, from: env.mailFrom, timeoutMs: env.mailTimeoutMs });
 }
@@ -33,9 +35,15 @@ function createServices({ mailer, cache }) {
   return {
     health: createHealthService({ health: healthRepository }),
     events: eventService,
-    registrations: createRegistrationService({ ...repos, eventService, mailer }),
+    registrations: createRegistrationService({ ...repos, pendingMails: pendingMailRepository, eventService, mailer }),
     stats: createStatsService(repos)
   };
+}
+
+// The hourly job that retries failed confirmation mails (started by server.mjs, called directly in tests).
+// Give it the same mailer as createApp(), so retries go through the same provider.
+export function createMailRetry({ mailer, maxAttempts = env.mailMaxAttempts }) {
+  return createMailRetryService({ pendingMails: pendingMailRepository, mailer, maxAttempts });
 }
 
 // Every dependency can be overridden, e.g. createApp({ mailer: fakeMailer }) in tests.
