@@ -70,6 +70,7 @@ api/src/
   repositories/    data access via Sequelize, returns plain objects (no rules)
   models/ db/      tables, connection, demo data
   mail/            SMTP mailer (nodemailer) + log-only mailer for development
+  messaging/       RabbitMQ broker + in-memory broker with the same publish/consume interface
   cache/           in-memory cache with a Redis-like async interface + all cache keys
   errors/          AppError and helpers (notFound, conflict, validationError)
   validation/      Zod schemas
@@ -79,28 +80,50 @@ Services get their dependencies passed in (`createEventService({ events, registr
 so tests can swap the mailer or the cache without mocking modules.
 
 The integration tests in `api/tests/integration` only talk HTTP. The original `events.test.mjs` is unchanged;
-`capacity`, `mail` and `cache` tests were added. Unit tests live in `api/tests/unit`.
+`capacity`, `mail`, `outbox` and `cache` tests were added. Unit tests live in `api/tests/unit`.
 
 ### Confirmation mail
 
 After a successful registration the participant gets a confirmation mail.
 
-- The registration is **stored first**; the mail is sent **in the background** (not awaited), so a slow,
-  broken or offline mail provider can never fail or delay a registration. Failures are logged as `warn`.
-- SMTP timeouts are short (`MAIL_TIMEOUT_MS`, default 10 s) instead of nodemailer's default of minutes.
-- Without `SMTP_URL`, mails are only written to the log, so local development needs no mail account.
+The mail is **always sent eventually**, even when the mail provider, RabbitMQ or the API itself is down
+for a while. It uses the **transactional outbox** pattern and a **RabbitMQ** queue:
 
-**Retries.** A mail that fails is stored in the `PendingMails` table. A job inside the API process retries it
-once at startup and then every `MAIL_RETRY_INTERVAL_MS` (default 1 h), one mail at a time, until it is sent
-(row deleted) or `MAIL_MAX_ATTEMPTS` (default 24, first try included) is reached (row kept, logged as `error`).
+```
+POST /registrations ─► ONE transaction: registration + outbox row ("mail owed") ─► 201
+outbox relay        ─► publishes unsent rows to RabbitMQ, deletes a row once the broker confirmed it
+mail worker         ─► consumes "mail.confirmation", sends via SMTP, then acks
+                       SMTP failed? ─► "mail.confirmation.retry" (waits MAIL_RETRY_DELAY_MS) ─► back to the worker
+```
 
-Trade-offs, accepted to stay simple (no broker, no extra process):
-- A crash between storing the registration and the first send attempt loses that mail.
-- If the provider accepts a mail but deleting its row fails, it is sent twice.
-- Run more than one API instance and both retry the same mails. With SQLite there is only one.
-- A RabbitMQ queue with a worker (see `api/lab/`) would fix these and retry faster.
+| What fails | What happens |
+|---|---|
+| The API crashes right after the registration | The outbox row was saved with it; the relay publishes it after the restart. |
+| RabbitMQ is unreachable | Rows stay in the outbox; the relay retries every `OUTBOX_POLL_INTERVAL_MS` (5 s). |
+| The mail provider is down | The message goes round the retry queue (every 60 s) until it works. No attempt limit. |
+| The worker crashes mid-send | Not acked yet, so RabbitMQ delivers the message again. |
 
-Code: `services/mailRetryService.mjs`, `repositories/pendingMailRepository.mjs`, started in `server.mjs`.
+- The response never waits for RabbitMQ or SMTP: a slow provider can't fail or delay a registration.
+- **At-least-once:** in rare crash timings a mail is sent twice. Never zero times.
+- The relay and the worker run **inside the API process** (Render's free tier has no free background workers).
+  They only talk through the broker, so the worker can move to its own process without code changes.
+- Without `AMQP_URL` an in-process broker is used (tests, local development): same flow, but not durable.
+- SMTP timeouts are short (`MAIL_TIMEOUT_MS`, default 10 s). Without `SMTP_URL`, mails are only logged.
+
+Code: `services/outboxRelay.mjs`, `services/mailWorker.mjs`, `messaging/` (RabbitMQ + in-memory broker),
+`repositories/outboxRepository.mjs`. Tests: `tests/integration/outbox.test.mjs`.
+
+### Registrations and the last seat
+
+Checking for a free seat and inserting the registration happen in **one transaction that first locks the event
+row** (`SELECT … FOR UPDATE` on Postgres). People registering at the same moment wait for each other, so the last
+seat is sold once. A unique index on `(eventId, email)` backs up the duplicate check. SQLite has no row locks, so
+there transactions are queued inside the process (fine for tests and development). See `repositories/transactions.mjs`.
+
+### Database
+
+Production uses **Postgres** (`DATABASE_URL`, e.g. a free Neon database): Render's free disk is wiped on every restart.
+Without `DATABASE_URL` the API uses SQLite (`DB_STORAGE`), so tests and local development need no database server.
 
 ### Caching
 

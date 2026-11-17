@@ -1,6 +1,7 @@
 import { cacheKeys } from '../cache/cacheKeys.mjs';
 import { conflict, eventNotFound } from '../errors/AppError.mjs';
 import { logger } from '../lib/logger.mjs';
+import { topics } from '../messaging/topics.mjs';
 
 export function confirmationMail(event, registration) {
   const when = new Date(event.startsAt).toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short', timeZone: 'Europe/Brussels' });
@@ -13,7 +14,7 @@ export function confirmationMail(event, registration) {
 
 const alreadyRegistered = (email) => conflict(`${email} is already registered for this event`);
 
-export function createRegistrationService({ eventService, events, registrations, transactions, pendingMails, mailer, cache }) {
+export function createRegistrationService({ eventService, events, registrations, transactions, outbox, outboxRelay, cache }) {
   async function assertNotRegistered(eventId, email, tx) {
     const existing = await registrations.findByEventAndEmail(eventId, email, tx);
     if (existing) throw alreadyRegistered(email);
@@ -36,24 +37,11 @@ export function createRegistrationService({ eventService, events, registrations,
 
       const registration = await registrations.create({ eventId: event.id, name, email }, tx);
       if (!registration) throw alreadyRegistered(email);
+      // Same transaction (outbox pattern): the registration and the mail we owe are saved
+      // together or not at all. Sending happens later, outside the request (outboxRelay → mailWorker).
+      await outbox.add(topics.confirmationMail, { registrationId: registration.id, mail: confirmationMail(event, registration) }, tx);
       return { event, registration };
     });
-  }
-
-  // Deliberately NOT awaited by register(): the registration is already stored, and a slow or
-  // offline mail provider must neither fail it nor delay the response. A failed mail is stored,
-  // so the hourly retry job (mailRetryService) sends it later.
-  // Promise.resolve().then(...) also catches a mailer that throws synchronously.
-  function sendConfirmationInBackground(event, registration) {
-    const context = { registrationId: registration.id };
-    return Promise.resolve()
-      .then(() => mailer.send(confirmationMail(event, registration)))
-      .then(() => logger.info('confirmation mail sent', context))
-      .catch(async (err) => {
-        logger.warn('confirmation mail failed, registration is kept, will retry later', { ...context, error: err.message });
-        await pendingMails.add(registration.id, err.message);
-      })
-      .catch((err) => logger.error('could not store the failed mail for a retry', { ...context, error: err.message }));
   }
 
   return {
@@ -70,7 +58,9 @@ export function createRegistrationService({ eventService, events, registrations,
       // The event list holds no counts, so it stays valid; these three show registrations.
       await cache.delete(cacheKeys.event(event.id), cacheKeys.registrations(event.id), cacheKeys.stats);
 
-      sendConfirmationInBackground(event, registration);
+      // Not awaited: neither a slow broker nor a slow mail provider may delay or fail the 201.
+      // If this attempt fails, the relay's next poll publishes the row.
+      outboxRelay.kick();
       return registration;
     }
   };

@@ -20,6 +20,9 @@ services:
       # SQLite, and every restart would wipe the data.
       - key: DATABASE_URL
         sync: false
+      # Secret: RabbitMQ URL (e.g. CloudAMQP). Carries the confirmation mails to the worker.
+      - key: AMQP_URL
+        sync: false
       # Secret: fill in on the dashboard. Without it, mails are only logged.
       - key: SMTP_URL
         sync: false

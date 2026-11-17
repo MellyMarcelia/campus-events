@@ -33,10 +33,14 @@ export const env = Object.freeze({
   mailFrom: process.env.MAIL_FROM || 'Campus Events <no-reply@campus-events.local>',
   // Kept short on purpose: a slow mail server must never hold on to resources for minutes.
   mailTimeoutMs: toNumber(process.env.MAIL_TIMEOUT_MS, 10_000),
-  // Failed confirmation mails are retried by a job in the API process, every hour by default.
-  mailRetryIntervalMs: toNumber(process.env.MAIL_RETRY_INTERVAL_MS, 60 * 60 * 1000),
-  // Counts the first try too: 24 = the first try plus about a day of hourly retries.
-  mailMaxAttempts: toNumber(process.env.MAIL_MAX_ATTEMPTS, 24),
+  // A mail that failed waits this long in the retry queue before the worker tries it again.
+  mailRetryDelayMs: toNumber(process.env.MAIL_RETRY_DELAY_MS, 60_000),
+
+  // RabbitMQ (e.g. a free CloudAMQP instance). Without it, an in-process broker is used:
+  // fine for development and tests, but messages in it are lost when the process stops.
+  amqpUrl: process.env.AMQP_URL || '',
+  // How often the outbox relay looks for messages that could not be published right away.
+  outboxPollIntervalMs: toNumber(process.env.OUTBOX_POLL_INTERVAL_MS, 5000),
 
   // Cache: how long a cached GET response may live, as a safety net next to explicit invalidation.
   cacheTtlSeconds: toNumber(process.env.CACHE_TTL_SECONDS, 60)
