@@ -15,10 +15,11 @@ services:
         value: production
       - key: LOG_LEVEL
         value: info
-      # Free instances have no persistent disk: the SQLite file resets on every
-      # redeploy/restart and server.mjs re-adds the demo data.
-      - key: DB_STORAGE
-        value: ./data/events.sqlite
+      # Free instances have no persistent disk, so the data lives in a managed Postgres (e.g. Neon).
+      # Secret: paste the connection string on the dashboard. Without it the API falls back to
+      # SQLite, and every restart would wipe the data.
+      - key: DATABASE_URL
+        sync: false
       # Secret: fill in on the dashboard. Without it, mails are only logged.
       - key: SMTP_URL
         sync: false

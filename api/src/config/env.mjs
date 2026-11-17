@@ -21,6 +21,11 @@ export const env = Object.freeze({
   isTest: process.env.NODE_ENV === 'test',
   port: toNumber(process.env.PORT, 3000),
   logLevel: process.env.LOG_LEVEL || 'info',
+  // Production: a managed Postgres (DATABASE_URL), because the hosting disk is wiped on every restart.
+  // Without DATABASE_URL: SQLite in DB_STORAGE, so tests and local development need no database server.
+  databaseUrl: process.env.DATABASE_URL || '',
+  // Hosted Postgres (Neon, Render) only accepts TLS. Set DATABASE_SSL=false for a local Postgres.
+  databaseSsl: process.env.DATABASE_SSL !== 'false',
   dbStorage: process.env.DB_STORAGE || './data/events.sqlite',
 
   // Mail: without SMTP_URL, mails are only written to the log (handy in development).

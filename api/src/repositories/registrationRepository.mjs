@@ -18,9 +18,10 @@ export const registrationRepository = {
 
   // One GROUP BY query instead of one query per event (the old stats endpoint did N+1 queries).
   // Returns a Map eventId → count; events without registrations are simply missing.
+  // Number(): Postgres returns a grouped COUNT(*) as a string ('2'), SQLite as a number.
   async countPerEvent() {
     const rows = await Registration.count({ group: ['eventId'] });
-    return new Map(rows.map((row) => [row.eventId, row.count]));
+    return new Map(rows.map((row) => [row.eventId, Number(row.count)]));
   },
 
   async create({ eventId, name, email }) {
