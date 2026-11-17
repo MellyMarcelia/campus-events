@@ -12,6 +12,10 @@ export const Event = sequelize.define('Event', {
 export const Registration = sequelize.define('Registration', {
   name: { type: DataTypes.STRING(100), allowNull: false },
   email: { type: DataTypes.STRING(254), allowNull: false }
+}, {
+  // Last line of defence against double registrations. sync() only adds it to new tables,
+  // so an existing local SQLite file needs `npm run seed` to get it.
+  indexes: [{ unique: true, fields: ['eventId', 'email'] }]
 });
 
 Event.hasMany(Registration, { foreignKey: { name: 'eventId', allowNull: false }, onDelete: 'CASCADE' });

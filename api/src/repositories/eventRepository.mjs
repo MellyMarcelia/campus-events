@@ -14,6 +14,13 @@ export const eventRepository = {
     return plain(await Event.findByPk(id));
   },
 
+  // SELECT ... FOR UPDATE: other transactions that lock the same event wait until `tx` ends.
+  // That queue is what stops two people from taking the last seat (SQLite ignores the lock,
+  // see transactions.mjs).
+  async findByIdForUpdate(id, tx) {
+    return plain(await Event.findByPk(id, { transaction: tx, lock: true }));
+  },
+
   async create(data) {
     return plain(await Event.create(data));
   },

@@ -16,6 +16,7 @@ import { eventRepository } from './repositories/eventRepository.mjs';
 import { healthRepository } from './repositories/healthRepository.mjs';
 import { pendingMailRepository } from './repositories/pendingMailRepository.mjs';
 import { registrationRepository } from './repositories/registrationRepository.mjs';
+import { transactions } from './repositories/transactions.mjs';
 import { createRouter } from './routes/index.mjs';
 import { createEventService } from './services/eventService.mjs';
 import { createHealthService } from './services/healthService.mjs';
@@ -35,7 +36,7 @@ function createServices({ mailer, cache }) {
   return {
     health: createHealthService({ health: healthRepository }),
     events: eventService,
-    registrations: createRegistrationService({ ...repos, pendingMails: pendingMailRepository, eventService, mailer }),
+    registrations: createRegistrationService({ ...repos, transactions, pendingMails: pendingMailRepository, eventService, mailer }),
     stats: createStatsService(repos)
   };
 }
