@@ -3,9 +3,13 @@
 // reconnects by itself: all we need for toasts, without a WebSocket library.
 const HEARTBEAT_MS = 25_000;
 
-export function createNotificationController(notificationService) {
+// allowedOrigin: the frontend's address, when it connects to this stream directly instead of via
+// its /api forwarding. Render's static-site rewrite waits for a response to END before passing it
+// on, and this one never ends, so in production the browser has to come here cross-origin.
+export function createNotificationController(notificationService, { allowedOrigin = '' } = {}) {
   return {
     stream(req, res) {
+      if (allowedOrigin) res.set('Access-Control-Allow-Origin', allowedOrigin);
       res.set({
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache, no-transform', // no-transform: proxies must not buffer or compress it

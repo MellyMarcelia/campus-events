@@ -71,7 +71,7 @@ export function createApp({
     events: createEventController(services.events),
     registrations: createRegistrationController(services.registrations),
     stats: createStatsController(services.stats),
-    notifications: createNotificationController(services.notifications),
+    notifications: createNotificationController(services.notifications, { allowedOrigin: env.notificationsAllowedOrigin }),
     mcp: createMcpController({ events: services.events, registrations: services.registrations })
   };
 

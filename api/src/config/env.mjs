@@ -42,6 +42,10 @@ export const env = Object.freeze({
   // How often the outbox relay looks for messages that could not be published right away.
   outboxPollIntervalMs: toNumber(process.env.OUTBOX_POLL_INTERVAL_MS, 5000),
 
+  // The frontend's origin (e.g. https://campus-events-web-6ogn.onrender.com), allowed to open the
+  // live notification stream directly. Empty: same-origin only (local development via Vite).
+  notificationsAllowedOrigin: process.env.NOTIFICATIONS_ALLOWED_ORIGIN || '',
+
   // Cache: how long a cached GET response may live, as a safety net next to explicit invalidation.
   cacheTtlSeconds: toNumber(process.env.CACHE_TTL_SECONDS, 60)
 });

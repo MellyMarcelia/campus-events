@@ -20,7 +20,11 @@ services:
       # SQLite, and every restart would wipe the data.
       - key: DATABASE_URL
         sync: false
-      # Secret: RabbitMQ URL (e.g. CloudAMQP). Carries the confirmation mails to the worker.
+      # The frontend may open the live notification stream (SSE) directly: the static site's
+      # /api rewrite below holds streaming responses back. Update if the web URL changes.
+      - key: NOTIFICATIONS_ALLOWED_ORIGIN
+        value: https://campus-events-web-6ogn.onrender.com
+      # Secret: RabbitMQ URL (e.g. CloudAMQP). Carries the confirmation mails and notifications.
       - key: AMQP_URL
         sync: false
       # Secret: fill in on the dashboard. Without it, mails are only logged.
@@ -37,6 +41,9 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22.12.0"
+      # Build-time: the live notification stream goes straight to the API (see the rewrite note).
+      - key: VITE_NOTIFICATIONS_URL
+        value: https://campus-events-api-y8n4.onrender.com/api/notifications
     routes:
       # Same trick as the Vite dev proxy: the browser only talks to one origin, so no CORS.
       # If Render gives the API a different URL, update it here.
