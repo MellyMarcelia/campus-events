@@ -12,7 +12,9 @@ function switchableBroker({ up = true } = {}) {
   const broker = {
     up,
     publish: (topic, message) => (broker.up ? inner.publish(topic, message) : Promise.reject(new Error('ECONNREFUSED'))),
-    consume: inner.consume
+    consume: inner.consume,
+    broadcast: inner.broadcast,
+    subscribe: inner.subscribe
   };
   return broker;
 }

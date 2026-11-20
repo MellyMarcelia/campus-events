@@ -12,11 +12,14 @@ const RECONNECT_DELAY_MS = 5000;
 //                             └─────────────────────────────────────────────────────────┘
 export function createRabbitBroker({ url, exchange = 'campus-events', retryDelayMs }) {
   const consumers = new Map(); // topic → handler, restored after a reconnect
+  const subscribers = new Map(); // pattern → handler (broadcasts), restored after a reconnect
   let started = new Set(); // topics consuming on the current connection
+  let declared = new Set(); // work queues known to exist on the current connection
   let channelPromise = null;
 
   async function open() {
     started = new Set();
+    declared = new Set();
     const connection = await amqp.connect(url);
     // A confirm channel: the broker tells us when it has safely stored a published message.
     const channel = await connection.createConfirmChannel();
@@ -29,6 +32,7 @@ export function createRabbitBroker({ url, exchange = 'campus-events', retryDelay
     await channel.assertExchange(exchange, 'topic', { durable: true });
     await channel.prefetch(1); // at most one unfinished message per consumer, like lab/worker.mjs
     for (const [topic, handler] of consumers) await startConsumer(channel, topic, handler);
+    for (const [pattern, handler] of subscribers) await startSubscriber(channel, pattern, handler);
     logger.info('connected to RabbitMQ');
     return channel;
   }
@@ -42,21 +46,47 @@ export function createRabbitBroker({ url, exchange = 'campus-events', retryDelay
     return channelPromise;
   }
 
-  // Only consumers need a standing connection; publishers reconnect when they publish.
+  // Only consumers and subscribers need a standing connection; publishers reconnect when they publish.
   function reconnectSoon() {
-    if (consumers.size === 0) return;
+    if (consumers.size === 0 && subscribers.size === 0) return;
     setTimeout(() => connect().catch((err) => {
       logger.warn('RabbitMQ still unreachable', { error: err.message });
       reconnectSoon();
     }), RECONNECT_DELAY_MS).unref();
   }
 
+  // A message for a topic without a queue is dropped by RabbitMQ. Publishers declare the queue
+  // too, so a mail published before the worker ever started (first deploy) still waits for it.
+  async function declareWorkQueue(channel, topic) {
+    if (declared.has(topic)) return;
+    await channel.assertQueue(topic, { durable: true });
+    await channel.bindQueue(topic, exchange, topic);
+    declared.add(topic);
+  }
+
+  // Publish/subscribe (like lab/rabbit.mjs): every subscriber gets its own temporary queue, so
+  // every API instance receives every broadcast. The queue disappears with the connection.
+  async function startSubscriber(channel, pattern, handler) {
+    const key = `subscriber:${pattern}`;
+    if (started.has(key)) return;
+    started.add(key);
+    const { queue } = await channel.assertQueue('', { exclusive: true });
+    await channel.bindQueue(queue, exchange, pattern);
+    await channel.consume(queue, (msg) => {
+      if (!msg) return;
+      try {
+        handler(JSON.parse(msg.content.toString()));
+      } catch (err) {
+        logger.warn('broadcast handler failed', { pattern, error: err.message });
+      }
+    }, { noAck: true }); // a missed broadcast is not worth redelivering
+  }
+
   async function startConsumer(channel, topic, handler) {
     if (started.has(topic)) return;
     started.add(topic);
     const retryQueue = `${topic}.retry`;
-    await channel.assertQueue(topic, { durable: true });
-    await channel.bindQueue(topic, exchange, topic);
+    await declareWorkQueue(channel, topic);
     // Nobody consumes the retry queue: a message waits there retryDelayMs, then RabbitMQ
     // "dead-letters" it back to the exchange with the original topic, so it is tried again.
     await channel.assertQueue(retryQueue, {
@@ -89,8 +119,27 @@ export function createRabbitBroker({ url, exchange = 'campus-events', retryDelay
     // Resolves once RabbitMQ has stored the message, so the caller may forget it (outbox relay).
     async publish(topic, message) {
       const channel = await connect();
+      await declareWorkQueue(channel, topic);
       channel.publish(exchange, topic, Buffer.from(JSON.stringify(message)), { persistent: true, contentType: 'application/json' });
       await channel.waitForConfirms();
+    },
+
+    // To every subscriber whose pattern matches, at most once. Not stored: nobody listening = gone.
+    async broadcast(topic, message) {
+      const channel = await connect();
+      channel.publish(exchange, topic, Buffer.from(JSON.stringify(message)), { contentType: 'application/json' });
+    },
+
+    // pattern: a RabbitMQ topic pattern, e.g. 'notify.#' for every topic starting with 'notify.'.
+    async subscribe(pattern, handler) {
+      subscribers.set(pattern, handler);
+      try {
+        // A brand-new connection already started it in open(); startSubscriber() skips it then.
+        await startSubscriber(await connect(), pattern, handler);
+      } catch (err) {
+        logger.warn('RabbitMQ unreachable, will keep trying', { error: err.message });
+        reconnectSoon();
+      }
     },
 
     async consume(topic, handler) {

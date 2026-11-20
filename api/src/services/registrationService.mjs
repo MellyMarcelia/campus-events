@@ -14,7 +14,7 @@ export function confirmationMail(event, registration) {
 
 const alreadyRegistered = (email) => conflict(`${email} is already registered for this event`);
 
-export function createRegistrationService({ eventService, events, registrations, transactions, outbox, outboxRelay, cache }) {
+export function createRegistrationService({ eventService, events, registrations, transactions, outbox, outboxRelay, notifications, cache }) {
   async function assertNotRegistered(eventId, email, tx) {
     const existing = await registrations.findByEventAndEmail(eventId, email, tx);
     if (existing) throw alreadyRegistered(email);
@@ -61,6 +61,8 @@ export function createRegistrationService({ eventService, events, registrations,
       // Not awaited: neither a slow broker nor a slow mail provider may delay or fail the 201.
       // If this attempt fails, the relay's next poll publishes the row.
       outboxRelay.kick();
+      // Only after the commit, and only once: a refused registration (409) never gets here.
+      notifications.registrationCreated(event);
       return registration;
     }
   };

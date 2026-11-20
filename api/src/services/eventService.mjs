@@ -4,7 +4,7 @@ import { eventNotFound } from '../errors/AppError.mjs';
 // Business rules for events. Dependencies are passed in, so tests can swap them.
 // Reads go through the cache; every write invalidates exactly the keys whose data it changes,
 // and always AFTER the database write, so the next read reloads fresh data.
-export function createEventService({ events, registrations, cache }) {
+export function createEventService({ events, registrations, cache, notifications }) {
   async function getById(id) {
     const event = await events.findById(id);
     if (!event) throw eventNotFound(id);
@@ -47,6 +47,7 @@ export function createEventService({ events, registrations, cache }) {
     async create(data) {
       const event = await events.create(data);
       await cache.delete(cacheKeys.eventList, cacheKeys.stats);
+      notifications.eventCreated(event); // after the write: never announce an event that failed to save
       return event;
     },
 

@@ -48,6 +48,22 @@ describe('memoryBroker', () => {
     assert.equal(calls, 2);
   });
 
+  it('broadcasts to every matching subscriber once, and to nobody else', async () => {
+    const broker = createMemoryBroker({ retryDelayMs: 5 });
+    const a = [];
+    const b = [];
+    const other = [];
+    await broker.subscribe('notify.#', (message) => a.push(message));
+    await broker.subscribe('notify.#', (message) => b.push(message));
+    await broker.subscribe('mail.#', (message) => other.push(message));
+
+    await broker.broadcast('notify.event-created', { id: 1 });
+
+    assert.deepEqual(a, [{ id: 1 }]);
+    assert.deepEqual(b, [{ id: 1 }]);
+    assert.deepEqual(other, []);
+  });
+
   it('gives the consumer a copy, not the published object', async () => {
     const broker = createMemoryBroker({ retryDelayMs: 5 });
     const original = { mail: { to: 'ada@example.com' } };

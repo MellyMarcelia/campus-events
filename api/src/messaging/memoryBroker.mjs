@@ -3,6 +3,11 @@
 // published but not yet handled are lost when the process stops. Production uses RabbitMQ.
 export function createMemoryBroker({ retryDelayMs }) {
   const queues = new Map(); // topic → { handler, waiting: [], busy }
+  const subscribers = []; // { pattern, handler } for broadcasts
+
+  // Supports the two RabbitMQ topic patterns we use: an exact topic, or 'prefix.#'.
+  const matches = (pattern, topic) =>
+    pattern.endsWith('.#') ? topic.startsWith(pattern.slice(0, -1)) : pattern === topic;
 
   const queueFor = (topic) => {
     if (!queues.has(topic)) queues.set(topic, { handler: null, waiting: [], busy: false });
@@ -42,6 +47,22 @@ export function createMemoryBroker({ retryDelayMs }) {
       const queue = queueFor(topic);
       queue.handler = handler;
       deliver(queue);
+    },
+
+    // Every matching subscriber gets a copy, once. Nobody subscribed: the message is gone (like RabbitMQ).
+    async broadcast(topic, message) {
+      for (const { pattern, handler } of subscribers) {
+        if (!matches(pattern, topic)) continue;
+        try {
+          handler(structuredClone(message));
+        } catch {
+          // one failing subscriber must not stop the others
+        }
+      }
+    },
+
+    async subscribe(pattern, handler) {
+      subscribers.push({ pattern, handler });
     }
   };
 }

@@ -6,6 +6,7 @@ import { env } from './config/env.mjs';
 import { createEventController } from './controllers/eventController.mjs';
 import { createHealthController } from './controllers/healthController.mjs';
 import { createMcpController } from './controllers/mcpController.mjs';
+import { createNotificationController } from './controllers/notificationController.mjs';
 import { createRegistrationController } from './controllers/registrationController.mjs';
 import { createStatsController } from './controllers/statsController.mjs';
 import { logger } from './lib/logger.mjs';
@@ -24,6 +25,7 @@ import { createRouter } from './routes/index.mjs';
 import { createEventService } from './services/eventService.mjs';
 import { createHealthService } from './services/healthService.mjs';
 import { createMailWorker } from './services/mailWorker.mjs';
+import { createNotificationService } from './services/notificationService.mjs';
 import { createOutboxRelay } from './services/outboxRelay.mjs';
 import { createRegistrationService } from './services/registrationService.mjs';
 import { createStatsService } from './services/statsService.mjs';
@@ -39,15 +41,17 @@ export function createDefaultBroker() {
   return createMemoryBroker({ retryDelayMs: env.mailRetryDelayMs });
 }
 
-function createServices({ cache, outboxRelay }) {
+function createServices({ cache, outboxRelay, broker }) {
   const repos = { events: eventRepository, registrations: registrationRepository, cache };
-  const eventService = createEventService(repos);
+  const notifications = createNotificationService({ broker });
+  const eventService = createEventService({ ...repos, notifications });
 
   return {
     health: createHealthService({ health: healthRepository }),
     events: eventService,
-    registrations: createRegistrationService({ ...repos, transactions, outbox: outboxRepository, outboxRelay, eventService }),
-    stats: createStatsService(repos)
+    registrations: createRegistrationService({ ...repos, transactions, outbox: outboxRepository, outboxRelay, notifications, eventService }),
+    stats: createStatsService(repos),
+    notifications
   };
 }
 
@@ -61,12 +65,13 @@ export function createApp({
   // Mail path: registration + outbox row (one transaction) → relay → broker → worker → mailer.
   const outboxRelay = createOutboxRelay({ outbox: outboxRepository, broker });
   createMailWorker({ broker, mailer }).start().catch((err) => logger.error('mail worker did not start', { error: err.message }));
-  const services = createServices({ cache, outboxRelay });
+  const services = createServices({ cache, outboxRelay, broker });
   const controllers = {
     health: createHealthController(services.health),
     events: createEventController(services.events),
     registrations: createRegistrationController(services.registrations),
     stats: createStatsController(services.stats),
+    notifications: createNotificationController(services.notifications),
     mcp: createMcpController({ events: services.events, registrations: services.registrations })
   };
 
