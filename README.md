@@ -80,7 +80,7 @@ Services get their dependencies passed in (`createEventService({ events, registr
 so tests can swap the mailer or the cache without mocking modules.
 
 The integration tests in `api/tests/integration` only talk HTTP. The original `events.test.mjs` is unchanged;
-`capacity`, `mail`, `outbox` and `cache` tests were added. Unit tests live in `api/tests/unit`.
+`capacity`, `mail`, `outbox`, `mcp`, `notifications` and `cache` tests were added. Unit tests live in `api/tests/unit`.
 
 ### Confirmation mail
 
@@ -120,6 +120,48 @@ row** (`SELECT … FOR UPDATE` on Postgres). People registering at the same mome
 seat is sold once. A unique index on `(eventId, email)` backs up the duplicate check. SQLite has no row locks, so
 there transactions are queued inside the process (fine for tests and development). See `repositories/transactions.mjs`.
 
+### MCP server (AI assistants)
+
+`POST /api/mcp` lets an AI assistant that speaks the **Model Context Protocol** use the app. Two tools, both thin
+wrappers around the same services as the REST API, so capacity, the seat lock and the confirmation mail all apply:
+
+| Tool | Input | Answers |
+|---|---|---|
+| `list_events` | `when`: `upcoming` (default) / `past` / `all`, optional `search` (title) | "Get me all upcoming events", "Get me all past events" |
+| `register_for_event` | `eventId`, `name`, `email` | "Register me with Sam at event X": one call per person |
+
+- **Connect:** add `https://campus-events-api-y8n4.onrender.com/api/mcp` as a remote MCP server ("custom connector")
+  in your assistant, or explore it with `npx @modelcontextprotocol/inspector`.
+- **Stateless:** every request gets a fresh server, so nothing is kept in memory between calls. JSON responses, no stream.
+- Expected problems (event full, already registered, unknown id) come back as readable tool errors.
+- Upcoming/past uses the same rule as `/stats`: past = the start time has gone by (`eventService.listUpcoming/listPast`).
+- **No authentication** (fine for this course project): anyone with the URL can register people.
+
+Code: `mcp/mcpServer.mjs` (tools), `controllers/mcpController.mjs` (HTTP). Tests: `tests/integration/mcp.test.mjs`.
+
+### Live notifications (toasts)
+
+Every open browser shows a toast when an event is created or someone registers. A toast never says who registered.
+
+```
+eventService / registrationService ─► broadcast "notify.*" ─► RabbitMQ ─► every API instance ─► SSE ─► every browser
+```
+
+- **Server-Sent Events** instead of WebSockets: the data only flows server → browser, it is plain HTTP, and the browser's
+  `EventSource` reconnects by itself. No extra library on either side.
+- **Through RabbitMQ** (publish/subscribe, one temporary queue per API instance), so it also works with more than one
+  API instance: each forwards every notification to its own browsers.
+- **Privacy by design:** `notifications.registrationCreated(event)` only gets the event, so it can't leak a name.
+- **One toast per registration:** published once, right after the commit (a refused registration publishes nothing),
+  and `App.vue` opens one connection for the whole page. At-most-once on purpose: not via the outbox, which could deliver
+  twice. A missed toast does no harm.
+- **Render detail:** the static site's `/api` rewrite holds a response back until it ends, and a stream never ends.
+  So the built frontend connects straight to the API (`VITE_NOTIFICATIONS_URL`), and the API allows only the frontend's
+  origin on that endpoint (`NOTIFICATIONS_ALLOWED_ORIGIN`). In development Vite's proxy streams fine.
+
+Code: `services/notificationService.mjs`, `controllers/notificationController.mjs`, `web/src/api/notifications.js`,
+`web/src/components/ToastStack.vue`, `web/src/composables/useToasts.js`.
+
 ### Database
 
 Production uses **Postgres** (`DATABASE_URL`, e.g. a free Neon database): Render's free disk is wiped on every restart.
@@ -148,14 +190,17 @@ for example Brevo: `SMTP_URL=smtp://<login>:<smtp-key>@smtp-relay.brevo.com:2525
 | GET / PATCH / DELETE | `/api/events/:id` | One event (incl. `registered`, `spotsLeft`) |
 | GET / POST | `/api/events/:id/registrations` | List / register `{ name, email }` |
 | GET | `/api/stats` | Occupancy per event |
+| GET | `/api/notifications` | Live notifications (Server-Sent Events) |
+| POST | `/api/mcp` | MCP server for AI assistants (Streamable HTTP, stateless) |
 
 Errors always have this shape: `{ "error": { "code", "message", "details?" } }`.
 
 ### web/
 
 ```
-api/          client.js (fetch + ApiError) and events.js (one function per endpoint)
+api/          client.js (fetch + ApiError), events.js (one function per endpoint), notifications.js (live stream)
 views/        one component per page, registered in router.js
-components/   reusable pieces: EventCard, SeatMeter, RegistrationForm, ErrorMessage
+components/   reusable pieces: EventCard, SeatMeter, RegistrationForm, ErrorMessage, ToastStack
+composables/  useToasts: the shared list of toasts
 styles.css    design tokens at the top, change those first
 ```
