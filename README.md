@@ -11,6 +11,18 @@ It works out of the box, and it has tests. It is also the kind of code you will 
 the whole API is one long file. Your job is to **clean it up, ship it to production, fix it and add the hard
 parts**
 
+**Live:** https://campus-events-web-6ogn.onrender.com (frontend) · https://campus-events-api-y8n4.onrender.com/api (API)
+
+What this version adds on top of the starter:
+
+- The API is split into layers (routes → controllers → services → repositories), see [api/](#api).
+- Production runs on **Render** with **Postgres** (Neon), **RabbitMQ** (CloudAMQP) and **SMTP** (Brevo), see [Database](#database).
+- Confirmation mails are guaranteed with a transactional outbox and RabbitMQ, see [Confirmation mail](#confirmation-mail).
+- The last seat can only be sold once, see [Registrations and the last seat](#registrations-and-the-last-seat).
+- An **MCP server** lets AI assistants list events and register people, see [MCP server](#mcp-server-ai-assistants).
+- **Live toasts** in every open browser for new events and registrations, see [Live notifications](#live-notifications-toasts).
+- GET endpoints are cached, see [Caching](#caching).
+
 ## Quick start
 
 You need **Node.js 22.12 or newer** (`node -v`) and Git.
@@ -33,6 +45,16 @@ Later parts need a few services. You never need them to run the tests.
 | Redis | `docker compose up -d redis` | `REDIS_URL` |
 | Identity provider | a free Auth0 tenant | `AUTH_ISSUER`, `AUTH_AUDIENCE`, `AUTH_CLIENT_ID` |
 
+What this version uses (all optional locally; copy `api/.env.example` to `api/.env` to set them):
+
+| Service | Used for | Without it (local development) | Setting in `api/.env` |
+|---|---|---|---|
+| Postgres (e.g. Neon, free) | Production database | SQLite file in `api/data/` | `DATABASE_URL` |
+| RabbitMQ (e.g. CloudAMQP, free; no Docker needed) | Confirmation mails, live notifications | In-process broker, not durable | `AMQP_URL` |
+| SMTP (e.g. Brevo, free) | Sending the confirmation mails | Mails are only written to the log | `SMTP_URL`, `MAIL_FROM` |
+
+Redis and the identity provider are not used yet: the cache is in-process (see [Caching](#caching)) and there is no login.
+
 ## Scripts (run from the root folder)
 
 | Script | What it does |
@@ -53,13 +75,49 @@ browser ──► web (Vite, :5173) ──/api/*──► api (Express, :3000) �
 In development Vite forwards every `/api/...` request to the API (see `web/vite.config.js`),
 so the browser only talks to one address and you don't need CORS.
 
+In production (Render):
+
+```
+browser ──► web (static site) ──/api/*──► api (Express) ──► Postgres (Neon)
+   │                                        │  ▲
+   │                                        ▼  │
+   │                                     RabbitMQ (CloudAMQP) ──► mail worker ──► SMTP (Brevo)
+   └──── live notifications (SSE, directly to the API) ◄──┘
+```
+
 ### api/
+
+#### Starting point (from the assignment)
+
+**Today** the whole API lives in one file:
+
+```
+api/src/app.mjs      settings, database + models, validation, routes, business rules, error handling
+api/src/server.mjs   starts the app (and adds demo data to an empty database)
+api/src/seed.mjs     npm run seed: reset the database
+```
+
+Prefered:
+
+```
+routes/        URL + validation → controller        (no logic)
+controllers/   HTTP in/out, picks the status code    (thin)
+services/      business rules, throws AppErrors      (no Express, no SQL)
+repositories/  data access via Sequelize             (no rules)
+models/ db/    tables, connection, demo data
+config/        the only place that reads process.env
+```
+
+The integration tests in `api/tests/integration` only talk HTTP. They pass before your refactoring,
+and they must still pass after it, without changing them.
+
+#### After the refactoring
 
 Request flow: `route → validate → controller → service → repository → model`.
 
 ```
 api/src/
-  app.mjs          composition root: createApp({ mailer?, cache? }) wires everything together
+  app.mjs          composition root: createApp({ mailer?, broker?, cache? }) wires everything together
   server.mjs       starts the app (and adds demo data to an empty database)
   seed.mjs         npm run seed: reset the database
   config/          env.mjs, the only place that reads process.env
@@ -68,7 +126,8 @@ api/src/
   controllers/     HTTP in/out, picks the status code    (thin)
   services/        business rules, throws AppErrors      (no Express, no Sequelize)
   repositories/    data access via Sequelize, returns plain objects (no rules)
-  models/ db/      tables, connection, demo data
+  models/ db/      tables, connection (Postgres or SQLite), demo data
+  mcp/             MCP server: the tools AI assistants can call
   mail/            SMTP mailer (nodemailer) + log-only mailer for development
   messaging/       RabbitMQ broker + in-memory broker with the same publish/consume interface
   cache/           in-memory cache with a Redis-like async interface + all cache keys
@@ -76,8 +135,8 @@ api/src/
   validation/      Zod schemas
 ```
 
-Services get their dependencies passed in (`createEventService({ events, registrations, cache })`),
-so tests can swap the mailer or the cache without mocking modules.
+Services get their dependencies passed in (`createEventService({ events, registrations, cache, notifications })`),
+so tests can swap the mailer, the broker or the cache without mocking modules.
 
 The integration tests in `api/tests/integration` only talk HTTP. The original `events.test.mjs` is unchanged;
 `capacity`, `mail`, `outbox`, `mcp`, `notifications` and `cache` tests were added. Unit tests live in `api/tests/unit`.
@@ -198,9 +257,17 @@ Errors always have this shape: `{ "error": { "code", "message", "details?" } }`.
 ### web/
 
 ```
-api/          client.js (fetch + ApiError), events.js (one function per endpoint), notifications.js (live stream)
+api/          client.js (fetch + ApiError) and events.js (one function per endpoint)
 views/        one component per page, registered in router.js
-components/   reusable pieces: EventCard, SeatMeter, RegistrationForm, ErrorMessage, ToastStack
-composables/  useToasts: the shared list of toasts
+components/   reusable pieces: EventCard, SeatMeter, RegistrationForm, ErrorMessage
 styles.css    design tokens at the top, change those first
+```
+
+Added in this version:
+
+```
+api/notifications.js        the live notification stream (EventSource), used once in App.vue
+components/ToastStack.vue   shows the toasts
+composables/useToasts.js    the shared list of toasts
+utils/notificationText.js   what a toast says
 ```
