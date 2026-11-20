@@ -5,6 +5,7 @@ import { createMemoryCache } from './cache/memoryCache.mjs';
 import { env } from './config/env.mjs';
 import { createEventController } from './controllers/eventController.mjs';
 import { createHealthController } from './controllers/healthController.mjs';
+import { createMcpController } from './controllers/mcpController.mjs';
 import { createRegistrationController } from './controllers/registrationController.mjs';
 import { createStatsController } from './controllers/statsController.mjs';
 import { logger } from './lib/logger.mjs';
@@ -65,7 +66,8 @@ export function createApp({
     health: createHealthController(services.health),
     events: createEventController(services.events),
     registrations: createRegistrationController(services.registrations),
-    stats: createStatsController(services.stats)
+    stats: createStatsController(services.stats),
+    mcp: createMcpController({ events: services.events, registrations: services.registrations })
   };
 
   const app = express();

@@ -17,12 +17,27 @@ export function createEventService({ events, registrations, cache }) {
     return { ...event, registered, spotsLeft: Math.max(event.capacity - registered, 0) };
   }
 
+  function list() {
+    return cache.remember(cacheKeys.eventList, () => events.findAll());
+  }
+
+  // Same rule as 'past' in statsService: an event is past once its start time has gone by.
+  // Filtered from the cached list (sorted soonest first), so no extra queries.
+  const hasStarted = (event, now) => new Date(event.startsAt) < now;
+
   return {
     // Uncached on purpose: used by other services right before a write, where stale data is not OK.
     getById,
 
-    list() {
-      return cache.remember(cacheKeys.eventList, () => events.findAll());
+    list,
+
+    async listUpcoming(now = new Date()) {
+      return (await list()).filter((event) => !hasStarted(event, now));
+    },
+
+    // Most recent first: "what happened lately" is what people ask about.
+    async listPast(now = new Date()) {
+      return (await list()).filter((event) => hasStarted(event, now)).reverse();
     },
 
     getDetail(id) {

@@ -3,7 +3,7 @@ import { validate } from '../middleware/validate.mjs';
 import { createEventSchema, idParamsSchema, registrationSchema, updateEventSchema } from '../validation/schemas.mjs';
 
 // Routes only wire URL + validation → controller. Read this file to see the whole API at a glance.
-export function createRouter({ health, events, registrations, stats }) {
+export function createRouter({ health, events, registrations, stats, mcp }) {
   const router = Router();
   const withId = validate({ params: idParamsSchema });
 
@@ -19,6 +19,11 @@ export function createRouter({ health, events, registrations, stats }) {
   router.post('/events/:id/registrations', validate({ params: idParamsSchema, body: registrationSchema }), registrations.create);
 
   router.get('/stats', stats.get);
+
+  // MCP endpoint for AI assistants. The MCP SDK validates the JSON-RPC body and the tool inputs.
+  router.post('/mcp', mcp.handle);
+  router.get('/mcp', mcp.methodNotAllowed);
+  router.delete('/mcp', mcp.methodNotAllowed);
 
   return router;
 }
